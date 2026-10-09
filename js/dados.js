@@ -56,6 +56,8 @@ const CONFIG_PADRAO = {
   documento: '',
   telefone: '',
   email: '',
+  instagram: '',
+  site: '',
   endereco: '',
   cidade: '',
   pix: '',
@@ -65,7 +67,8 @@ const CONFIG_PADRAO = {
   pagamento: 'Pix, dinheiro ou cartão. 50% na aprovação e 50% na conclusão do serviço.',
   garantia: '90 dias sobre a mão de obra, conforme o Código de Defesa do Consumidor. Materiais conforme garantia do fabricante.',
   observacoes: 'Serviços executados conforme a norma ABNT NBR 5410. Não inclui obras civis (quebra/reparo de alvenaria, pintura), salvo se descrito acima.',
-  proximoNumero: 1
+  proximoNumero: 1,
+  configurado: false
 };
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -86,6 +89,8 @@ function carregar() {
     DB = bruto ? JSON.parse(bruto) : estadoInicial();
     DB.config = { ...CONFIG_PADRAO, ...DB.config };
     DB.clientes ||= []; DB.catalogo ||= []; DB.orcamentos ||= [];
+    // quem já tinha personalizado o nome antes desta versão não vê a tela de boas-vindas
+    if (bruto && !DB.config.configurado && DB.config.empresa !== 'Seu Nome Eletricista') DB.config.configurado = true;
   } catch (e) {
     DB = estadoInicial();
   }
@@ -115,7 +120,7 @@ function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;
 function totais(o) {
   const servicos = o.itens.filter(i => i.tipo === 'servico').reduce((s, i) => s + parseNum(i.qtd) * parseNum(i.preco), 0);
   const materiais = o.itens.filter(i => i.tipo === 'material').reduce((s, i) => s + parseNum(i.qtd) * parseNum(i.preco), 0);
-  const subtotal = servicos + materiais;
+  const subtotal = servicos + (o.materiaisCliente ? 0 : materiais);
   const d = parseNum(o.desconto);
   const desconto = Math.min(subtotal, o.descontoTipo === '%' ? subtotal * d / 100 : d);
   return { servicos, materiais, subtotal, desconto, total: subtotal - desconto };
@@ -123,10 +128,23 @@ function totais(o) {
 
 function clienteDe(o) { return DB.clientes.find(c => c.id === o.clienteId) || o.cliente || {}; }
 
+// "12988887777" -> "(12) 98888-7777"; outros formatos ficam como foram digitados
+function fmtFone(s) {
+  const d = soDigitos(s).replace(/^55(?=\d{10,11}$)/, '');
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return String(s || '').trim();
+}
+
 // Telefone para link do WhatsApp (assume Brasil se não houver DDI)
 function foneWhats(tel) {
   let d = soDigitos(tel);
   if (!d) return '';
   if (d.length <= 11) d = '55' + d.replace(/^0+/, '');
   return d;
+}
+
+// Aceita "@perfil", "perfil" ou o link do perfil e devolve só "perfil"
+function igUsuario(s) {
+  return String(s || '').trim().replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/^@+/, '').split(/[/?#\s]/)[0];
 }

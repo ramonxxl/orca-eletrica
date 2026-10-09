@@ -122,7 +122,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amarelo); b
 }
 .item.material { border-left-color: var(--amarelo); }
 .item .tag { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--suave); }
-.item .rm { position: absolute; top: 4px; right: 4px; color: var(--vermelho); font-size: 18px; }
 .item input { padding: 9px 10px; }
 .item .linha { margin-top: 8px; }
 .item .sub { text-align: right; font-weight: 700; color: var(--azul); margin-top: 6px; font-size: 14px; }
@@ -160,7 +159,64 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--amarelo); b
 
 .toast {
   position: fixed; left: 50%; bottom: calc(90px + var(--safe-b)); transform: translateX(-50%); z-index: 60;
-  background: var(--azul); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: 90vw; box-shadow: 0 6px 16px rgba(0,0,0,.25);
+  background: var(--azul); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; max-width: 90vw; pointer-events: none; box-shadow: 0 6px 16px rgba(0,0,0,.25);
 }
 .ajuda { font-size: 13px; color: var(--suave); margin: 6px 0 0; }
 .num-badge { font-size: 12px; color: var(--suave); font-weight: 700; }
+
+/* ---------- v2: marca, boas-vindas, itens ---------- */
+.logo-topo { height: 32px; max-width: 90px; object-fit: contain; background: #fff; border-radius: 6px; padding: 2px 4px; }
+.topbar h1.com-logo::before { content: none; }
+body.boasvindas .tabbar { display: none; }
+body.boasvindas { padding-bottom: 24px; }
+
+.boas-vindas { text-align: center; padding: 8px 8px 16px; }
+.boas-vindas .bv-icone { font-size: 44px; width: 72px; height: 72px; line-height: 72px; margin: 0 auto 8px; border-radius: 20px; background: var(--azul); color: var(--amarelo); }
+.boas-vindas h2 { margin: 0 0 8px; font-size: 21px; color: var(--azul); }
+.boas-vindas p { margin: 0; color: var(--suave); }
+
+.logo-zona {
+  border: 2px dashed #b8c2d3; border-radius: 14px; min-height: 130px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 4px; padding: 14px; cursor: pointer; background: #fafbfd; text-align: center;
+}
+.logo-zona:active { background: #f1f4f9; }
+.logo-zona img { max-width: 100%; max-height: 120px; object-fit: contain; }
+.logo-zona img.clara { background: var(--azul); padding: 8px; border-radius: 8px; }
+.logo-zona .logo-mais { font-size: 34px; color: var(--amarelo); line-height: 1; }
+.logo-zona b { color: var(--azul); }
+.logo-zona small { color: var(--suave); }
+
+.campo-ig { display: flex; align-items: center; border: 1px solid var(--borda); border-radius: 10px; background: #fff; overflow: hidden; }
+.campo-ig span { padding: 0 4px 0 12px; color: var(--suave); font-weight: 700; }
+.campo-ig input { border: 0; padding-left: 2px; }
+.campo-ig:focus-within { outline: 2px solid var(--amarelo); }
+.campo-ig input:focus { outline: none; }
+
+.cores { display: flex; flex-wrap: wrap; gap: 10px; }
+.cor { width: 38px; height: 38px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1px var(--borda); cursor: pointer; padding: 0; }
+.cor.ativa { box-shadow: 0 0 0 3px var(--amarelo); }
+.cor.outra { display: flex; align-items: center; justify-content: center; background: #fff; margin: 0; font-size: 18px; position: relative; overflow: hidden; }
+.cor.outra input { position: absolute; inset: 0; opacity: 0; cursor: pointer; padding: 0; }
+
+.previa { display: flex; align-items: center; gap: 10px; color: #fff; padding: 10px; border-radius: 10px; min-height: 76px; }
+.previa-logo { flex: 0 0 auto; background: #fff; border-radius: 6px; padding: 4px; display: flex; align-items: center; justify-content: center; height: 58px; max-width: 96px; }
+.previa-logo.clara { background: transparent; }
+.previa-logo img { max-height: 50px; max-width: 88px; object-fit: contain; }
+.previa-logo.vazia { width: 58px; color: #98a2b3; font-size: 10px; font-weight: 800; text-align: center; line-height: 1.2; }
+.previa-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 11px; line-height: 1.45; }
+.previa-txt b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.previa-txt span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .92; }
+.previa-num { text-align: right; flex: 0 0 auto; }
+.previa-num small { display: block; font-size: 9px; font-weight: 700; }
+.previa-num b { font-size: 15px; }
+
+.item-topo { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.mini { border: 1px solid var(--borda); background: #fff; border-radius: 8px; min-width: 32px; height: 30px; font-size: 15px; color: var(--azul); cursor: pointer; }
+.mini:disabled { opacity: .35; }
+.mini.rm { color: var(--vermelho); }
+.item textarea { min-height: 0; padding: 9px 10px; resize: none; overflow: hidden; line-height: 1.35; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--texto); font-weight: 600; margin-top: 14px; cursor: pointer; }
+.check input { width: 22px; height: 22px; flex: 0 0 auto; margin: 0; accent-color: var(--azul); }
+.check small { display: block; font-weight: 400; color: var(--suave); }
+.chip.aguardando { background: #fff4e0; color: #b54708; text-transform: none; }
+.dica { border-left: 4px solid var(--amarelo); }

@@ -1,5 +1,5 @@
 // Cache do app para funcionar sem internet
-const VERSAO = 'orca-v1';
+const VERSAO = 'orca-v2';
 const ARQUIVOS = [
   './', './index.html', './styles.css', './manifest.json',
   './js/dados.js', './js/pdf.js', './js/app.js',

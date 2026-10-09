@@ -15,6 +15,10 @@ function toast(msg) {
 function topo(titulo, { voltar = false, acao = null } = {}) {
   $('#titulo').textContent = titulo;
   $('#btnVoltar').hidden = !voltar;
+  const lg = $('#logoTopo');
+  lg.hidden = !DB.config.logo || voltar;
+  if (DB.config.logo && lg.src !== DB.config.logo) lg.src = DB.config.logo;
+  $('#titulo').classList.toggle('com-logo', !lg.hidden);
   const b = $('#btnAcaoTopo');
   b.hidden = !acao;
   if (acao) { b.textContent = acao.texto; b.onclick = acao.fn; }
@@ -33,12 +37,14 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') fechar
 
 // ---------- Roteador ----------
 function rota() {
-  const [, tela, id] = (location.hash || '#/orcamentos').split('/');
+  let [, tela, id] = (location.hash || '#/orcamentos').split('/');
+  if (!DB.config.configurado) tela = 'boasvindas';
   document.body.classList.toggle('editor', tela === 'orcamento');
+  document.body.classList.toggle('boasvindas', tela === 'boasvindas');
   document.querySelectorAll('#tabbar a').forEach(a => a.classList.toggle('ativo', a.dataset.tab === tela));
   document.querySelector('.fab')?.remove();
   window.scrollTo(0, 0);
-  ({ orcamentos: telaOrcamentos, orcamento: () => telaEditor(id), clientes: telaClientes, catalogo: telaCatalogo, config: telaConfig }[tela] || telaOrcamentos)();
+  ({ orcamentos: telaOrcamentos, orcamento: () => telaEditor(id), clientes: telaClientes, catalogo: telaCatalogo, config: telaConfig, boasvindas: telaBoasVindas }[tela] || telaOrcamentos)();
 }
 window.addEventListener('hashchange', rota);
 
@@ -67,12 +73,15 @@ function telaOrcamentos() {
     (filtroStatus === 'todos' || o.status === filtroStatus) &&
     (!termo || `${numero(o.numero)} ${clienteDe(o).nome || ''} ${o.titulo}`.toLowerCase().includes(termo)));
   const somar = st => DB.orcamentos.filter(o => o.status === st).reduce((s, o) => s + totais(o).total, 0);
+  const cont = st => DB.orcamentos.filter(o => o.status === st).length;
+  const decididos = cont('aprovado') + cont('recusado') + cont('enviado');
+  const taxa = decididos ? Math.round(cont('aprovado') * 100 / decididos) + '%' : '—';
 
   view.innerHTML = `
     <div class="resumo">
       <div><small>Enviados</small><strong>${fmtBRL(somar('enviado'))}</strong></div>
       <div><small>Aprovados</small><strong>${fmtBRL(somar('aprovado'))}</strong></div>
-      <div><small>Total</small><strong>${DB.orcamentos.length}</strong></div>
+      <div><small>Aprovação</small><strong>${taxa}</strong></div>
     </div>
     <input class="busca" type="search" placeholder="Buscar por cliente, nº ou serviço" value="${esc(buscaOrc)}" id="buscaOrc">
     <div class="filtros">${['todos', ...Object.keys(STATUS)].map(s =>
@@ -82,15 +91,25 @@ function telaOrcamentos() {
         <div class="info">
           <div class="t">${esc(clienteDe(o).nome || 'Sem cliente')}</div>
           <div class="s"><span class="num-badge">Nº ${numero(o.numero)}</span> · ${fmtData(o.data)}${o.titulo ? ' · ' + esc(o.titulo) : ''}</div>
-          <span class="chip ${o.status}">${STATUS[o.status]}</span>
+          <span class="chip ${o.status}">${STATUS[o.status]}</span>${aguardando(o)}
         </div>
         <div class="v">${fmtBRL(totais(o).total)}</div>
       </a>`).join('') : `<div class="vazio"><b>📄</b>${DB.orcamentos.length ? 'Nenhum orçamento encontrado.' : 'Nenhum orçamento ainda.<br>Toque no <strong>+</strong> para criar o primeiro.'}</div>`}
     </div>
-    ${DB.config.empresa === CONFIG_PADRAO.empresa ? `<div class="card"><h3>Primeiro passo</h3>Cadastre o nome, telefone e logo da sua empresa para aparecerem no PDF.<div class="botoes"><a class="btn amarelo" href="#/config">Configurar empresa</a></div></div>` : ''}`;
+    ${!DB.config.logo ? `<div class="card dica"><h3>Deixe seus orçamentos com a sua cara</h3>Coloque a logo da sua empresa: ela aparece no topo de todo PDF enviado.<div class="botoes"><a class="btn amarelo" href="#/config">Colocar minha logo</a></div></div>` : ''}`;
   $('#buscaOrc').oninput = e => { buscaOrc = e.target.value; const pos = e.target.selectionStart; telaOrcamentos(); const i = $('#buscaOrc'); i.focus(); i.setSelectionRange(pos, pos); };
   view.querySelectorAll('.filtros button').forEach(b => b.onclick = () => { filtroStatus = b.dataset.s; telaOrcamentos(); });
   fab(() => novoOrcamento());
+}
+
+// Dias desde o envio, para lembrar de cobrar retorno do cliente
+function diasDesdeEnvio(o) {
+  if (o.status !== 'enviado' || !o.enviadoEm) return 0;
+  return Math.floor((new Date(hoje() + 'T12:00:00') - new Date(o.enviadoEm + 'T12:00:00')) / 864e5);
+}
+function aguardando(o) {
+  const d = diasDesdeEnvio(o);
+  return d >= 2 ? ` <span class="chip aguardando">⏳ ${d} dias sem resposta</span>` : '';
 }
 
 // ---------- Editor de orçamento ----------
@@ -138,6 +157,7 @@ function telaEditor(id) {
         <button class="btn amarelo" id="btnCatalogo">+ Do catálogo</button>
         <button class="btn sec" id="btnAvulso">+ Item avulso</button>
       </div>
+      <label class="check"><input type="checkbox" id="chkMatCli" ${o.materiaisCliente ? 'checked' : ''}> Materiais comprados pelo cliente <small>(o PDF mostra só a lista, sem valores, e o total vira só a mão de obra)</small></label>
     </div>
 
     <div class="card">
@@ -180,6 +200,7 @@ function telaEditor(id) {
     el.addEventListener('input', () => {
       const f = el.dataset.f;
       o[f] = f === 'desconto' ? parseNum(el.value) : el.value;
+      if (f === 'status' && el.value === 'enviado' && !o.enviadoEm) o.enviadoEm = hoje();
       if (f === 'desconto' || f === 'descontoTipo') desenharTotais();
       salvarDepois();
     });
@@ -195,11 +216,13 @@ function telaEditor(id) {
   $('#btnNovoCli').onclick = () => formCliente(null, c => { o.clienteId = c.id; salvar(); telaEditor(id); });
   mostrarCli();
 
+  $('#chkMatCli').onchange = e => { o.materiaisCliente = e.target.checked; salvar(); desenharTotais(); };
+
   function desenharTotais() {
     const t = totais(o);
     $('#totais').innerHTML = `
       <div><span>Mão de obra</span><span>${fmtBRL(t.servicos)}</span></div>
-      <div><span>Materiais</span><span>${fmtBRL(t.materiais)}</span></div>
+      <div><span>Materiais${o.materiaisCliente ? ' <small>(cliente compra)</small>' : ''}</span><span ${o.materiaisCliente ? 'style="text-decoration:line-through;color:var(--suave)"' : ''}>${fmtBRL(t.materiais)}</span></div>
       ${t.desconto ? `<div><span>Desconto</span><span>- ${fmtBRL(t.desconto)}</span></div>` : ''}
       <div class="total"><span>Total</span><span>${fmtBRL(t.total)}</span></div>`;
     $('#totalBarra').textContent = fmtBRL(t.total);
@@ -210,9 +233,15 @@ function telaEditor(id) {
     if (!o.itens.length) { box.innerHTML = '<p class="ajuda">Nenhum item. Adicione serviços e materiais abaixo.</p>'; desenharTotais(); return; }
     box.innerHTML = o.itens.map((i, n) => `
       <div class="item ${i.tipo}" data-n="${n}">
-        <span class="tag">${i.tipo === 'servico' ? 'Serviço' : 'Material'}</span>
-        <button class="icon-btn rm" data-rm="${n}" aria-label="Remover">✕</button>
-        <input data-i="desc" value="${esc(i.desc)}" placeholder="Descrição">
+        <div class="item-topo">
+          <span class="tag">${i.tipo === 'servico' ? 'Serviço' : 'Material'}</span>
+          <span class="spacer"></span>
+          <button class="mini" data-mv="-1" ${n === 0 ? 'disabled' : ''} aria-label="Subir">↑</button>
+          <button class="mini" data-mv="1" ${n === o.itens.length - 1 ? 'disabled' : ''} aria-label="Descer">↓</button>
+          ${DB.catalogo.some(c => c.desc === i.desc && c.tipo === i.tipo) || !i.desc ? '' : '<button class="mini" data-cat aria-label="Salvar no catálogo" title="Salvar no catálogo">★</button>'}
+          <button class="mini rm" data-rm="${n}" aria-label="Remover">✕</button>
+        </div>
+        <textarea data-i="desc" rows="1" placeholder="Descrição">${esc(i.desc)}</textarea>
         <div class="linha">
           <div class="qtd"><input data-i="qtd" inputmode="decimal" value="${fmtNum(i.qtd)}" aria-label="Quantidade"></div>
           <div class="un"><input data-i="un" value="${esc(i.un)}" aria-label="Unidade"></div>
@@ -221,7 +250,19 @@ function telaEditor(id) {
         <div class="sub">${fmtBRL(parseNum(i.qtd) * parseNum(i.preco))}</div>
       </div>`).join('');
     box.querySelectorAll('.item').forEach(div => {
-      const i = o.itens[div.dataset.n];
+      const n = +div.dataset.n, i = o.itens[n];
+      div.querySelectorAll('[data-mv]').forEach(b => b.onclick = () => {
+        const m = n + +b.dataset.mv;
+        [o.itens[n], o.itens[m]] = [o.itens[m], o.itens[n]]; salvar(); desenharItens();
+      });
+      const bc = div.querySelector('[data-cat]');
+      if (bc) bc.onclick = () => {
+        DB.catalogo.push({ id: uid(), tipo: i.tipo, desc: i.desc.trim(), un: i.un || 'un', preco: parseNum(i.preco) });
+        salvar(); bc.remove(); toast('Salvo no catálogo');
+      };
+      const ta = div.querySelector('textarea');
+      const ajustar = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+      ta.addEventListener('input', ajustar); requestAnimationFrame(ajustar);
       div.querySelectorAll('[data-i]').forEach(inp => inp.addEventListener('input', () => {
         const f = inp.dataset.i;
         i[f] = (f === 'qtd' || f === 'preco') ? parseNum(inp.value) : inp.value;
@@ -286,20 +327,55 @@ function escolherDoCatalogo(cb) {
 }
 
 function menuOrcamento(o) {
+  const enviado = o.status === 'enviado';
   abrirModal('Opções', `
     <div class="botoes" style="flex-direction:column">
+      ${enviado ? '<button class="btn whats" id="mCobrar">⏳ Cobrar retorno do cliente</button>' : ''}
+      <button class="btn sec" id="mRecibo">🧾 Gerar recibo de pagamento</button>
       <button class="btn sec" id="mDup">📋 Duplicar orçamento</button>
       <button class="btn sec" id="mBaixar">⬇️ Baixar PDF</button>
       <button class="btn sec" id="mWhatsTxt">💬 Mandar resumo em texto no WhatsApp</button>
       <button class="btn perigo" id="mDel">🗑️ Excluir orçamento</button>
     </div>`, () => {
+    if (enviado) $('#mCobrar').onclick = () => { fecharModal(); abrirWhatsTexto(o, mensagemCobranca(o)); };
+    $('#mRecibo').onclick = () => formRecibo(o);
     $('#mDup').onclick = () => { fecharModal(); novoOrcamento(o); toast('Orçamento duplicado'); };
     $('#mBaixar').onclick = () => { fecharModal(); baixarPDF(o); };
-    $('#mWhatsTxt').onclick = () => { fecharModal(); abrirWhats(o, true); };
+    $('#mWhatsTxt').onclick = () => { fecharModal(); abrirWhatsTexto(o, mensagem(o, true)); };
     $('#mDel').onclick = () => {
       if (!confirm('Excluir este orçamento?')) return;
       DB.orcamentos = DB.orcamentos.filter(x => x.id !== o.id); salvar(); fecharModal();
       location.hash = '#/orcamentos';
+    };
+  });
+}
+
+function formRecibo(o) {
+  if (!o.clienteId && !o.cliente) { fecharModal(); toast('Selecione o cliente antes de gerar o recibo.'); return; }
+  const t = totais(o);
+  abrirModal('Recibo de pagamento', `
+    <label>Valor recebido (R$)</label>
+    <input id="rValor" inputmode="decimal" value="${t.total.toFixed(2).replace('.', ',')}">
+    <div class="botoes" style="margin-top:8px">
+      <button class="btn sec peq" data-pct="100">Total</button>
+      <button class="btn sec peq" data-pct="50">50% (sinal)</button>
+      <button class="btn sec peq" data-pct="30">30%</button>
+    </div>
+    <label>Forma de pagamento</label>
+    <select id="rForma"><option>Pix</option><option>dinheiro</option><option>cartão de crédito</option><option>cartão de débito</option><option>transferência bancária</option><option value="">(não informar)</option></select>
+    <label>Referente a</label>
+    <input id="rRef" value="${esc(o.titulo || 'serviços elétricos')}">
+    <label>Data</label>
+    <input type="date" id="rData" value="${hoje()}">
+    <div class="botoes"><button class="btn whats bloco" id="rOk">📤 Gerar e enviar recibo</button></div>`, corpo => {
+    corpo.querySelectorAll('[data-pct]').forEach(b => b.onclick = () => { $('#rValor').value = (t.total * b.dataset.pct / 100).toFixed(2).replace('.', ','); });
+    $('#rOk').onclick = () => {
+      const r = { valor: parseNum($('#rValor').value), forma: $('#rForma').value, referente: $('#rRef').value.trim(), data: $('#rData').value || hoje() };
+      if (!r.valor) { toast('Informe o valor recebido.'); return; }
+      fecharModal();
+      const c = clienteDe(o);
+      compartilhar(gerarRecibo(o, r), nomeArquivo(o, 'Recibo'), o,
+        `Olá${c.nome ? ', ' + c.nome.split(' ')[0] : ''}! Segue o recibo de ${fmtBRL(r.valor)} referente a ${r.referente}. Obrigado pela confiança!${assinaturaMsg()}`);
     };
   });
 }
@@ -319,44 +395,68 @@ function baixarPDF(o) {
   if (!validar(o)) return;
   gerarPDF(o).save(nomeArquivo(o));
 }
+function assinaturaMsg() {
+  const cfg = DB.config, ig = igUsuario(cfg.instagram);
+  let m = `\n\n${cfg.empresa}${cfg.telefone ? ' – ' + cfg.telefone : ''}`;
+  if (ig) m += `\n📸 Veja meus trabalhos no Instagram: instagram.com/${ig}`;
+  return m;
+}
 function mensagem(o, comItens) {
   const c = clienteDe(o), cfg = DB.config, t = totais(o);
   const tipo = o.tipoDoc === 'proposta' ? 'a proposta' : 'o orçamento';
   let m = `Olá${c.nome ? ', ' + c.nome.split(' ')[0] : ''}! Segue ${tipo} Nº ${numero(o.numero)}${o.titulo ? ' – ' + o.titulo : ''}.\n`;
-  if (comItens) m += '\n' + o.itens.map(i => `• ${fmtNum(i.qtd)} ${i.un} ${i.desc} – ${fmtBRL(parseNum(i.qtd) * parseNum(i.preco))}`).join('\n') + '\n';
+  if (comItens) {
+    m += '\n' + o.itens.map(i => `• ${fmtNum(i.qtd)} ${i.un} ${i.desc}` +
+      (i.tipo === 'material' && o.materiaisCliente ? '' : ` – ${fmtBRL(parseNum(i.qtd) * parseNum(i.preco))}`)).join('\n') + '\n';
+    if (o.materiaisCliente) m += '_(materiais por conta do cliente)_\n';
+  }
   if (t.desconto) m += `\nDesconto: ${fmtBRL(t.desconto)}`;
-  m += `\n*Total: ${fmtBRL(t.total)}*\nVálido até ${fmtData(o.validade)}.`;
+  m += `\n*Total${o.materiaisCliente ? ' da mão de obra' : ''}: ${fmtBRL(t.total)}*\nVálido até ${fmtData(o.validade)}.`;
   if (cfg.pix) m += `\nChave Pix: ${cfg.pix}`;
-  m += `\n\nQualquer dúvida estou à disposição.\n${cfg.empresa}${cfg.telefone ? ' – ' + cfg.telefone : ''}`;
+  m += `\n\nQualquer dúvida estou à disposição.` + assinaturaMsg();
   return m;
 }
-function abrirWhats(o, comItens) {
-  const fone = foneWhats(clienteDe(o).telefone);
-  window.open(`https://wa.me/${fone}?text=${encodeURIComponent(mensagem(o, comItens))}`, '_blank');
+function mensagemCobranca(o) {
+  const c = clienteDe(o);
+  return `Olá${c.nome ? ', ' + c.nome.split(' ')[0] : ''}, tudo bem? Passando para saber se conseguiu avaliar ` +
+    `${o.tipoDoc === 'proposta' ? 'a proposta' : 'o orçamento'} Nº ${numero(o.numero)}${o.titulo ? ' (' + o.titulo + ')' : ''}, ` +
+    `no valor de ${fmtBRL(totais(o).total)}. Ele vale até ${fmtData(o.validade)}. ` +
+    `Posso agendar o serviço? Se tiver alguma dúvida ou quiser ajustar algo, é só me falar.` + assinaturaMsg();
 }
+function abrirWhatsTexto(o, texto) {
+  const fone = foneWhats(clienteDe(o).telefone);
+  window.open(`https://wa.me/${fone}?text=${encodeURIComponent(texto)}`, '_blank');
+}
+
+// Abre o compartilhamento do celular com o PDF anexado; no computador baixa e abre o WhatsApp
+async function compartilhar(doc, nome, o, texto) {
+  const blob = doc.output('blob');
+  const arquivo = new File([blob], nome, { type: 'application/pdf' });
+  if (navigator.canShare && navigator.canShare({ files: [arquivo] })) {
+    try {
+      await navigator.share({ files: [arquivo], title: nome, text: texto });
+      toast('Enviado!');
+      return true;
+    } catch (e) {
+      if (e.name === 'AbortError') return false;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = nome; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  abrirWhatsTexto(o, texto);
+  toast('PDF baixado. Anexe-o na conversa do WhatsApp.');
+  return true;
+}
+
 async function enviar(o) {
   if (!validar(o)) return;
   if (!o.clienteId) { toast('Selecione o cliente antes de enviar.'); return; }
-  const blob = gerarPDF(o).output('blob');
-  const arquivo = new File([blob], nomeArquivo(o), { type: 'application/pdf' });
-  const marcarEnviado = () => { if (o.status === 'rascunho') { o.status = 'enviado'; salvar(); const s = view.querySelector('[data-f="status"]'); if (s) s.value = 'enviado'; } };
-
-  if (navigator.canShare && navigator.canShare({ files: [arquivo] })) {
-    try {
-      await navigator.share({ files: [arquivo], title: arquivo.name, text: mensagem(o, false) });
-      marcarEnviado(); toast('Enviado!');
-      return;
-    } catch (e) {
-      if (e.name === 'AbortError') return;
-    }
+  const ok = await compartilhar(gerarPDF(o), nomeArquivo(o), o, mensagem(o, false));
+  if (ok && o.status === 'rascunho') {
+    o.status = 'enviado'; o.enviadoEm = hoje(); salvar();
+    const s = view.querySelector('[data-f="status"]'); if (s) s.value = 'enviado';
   }
-  // Sem compartilhamento de arquivo (ex.: computador): baixa o PDF e abre a conversa do cliente
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = arquivo.name; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-  abrirWhats(o, false);
-  marcarEnviado();
-  toast('PDF baixado. Anexe-o na conversa do WhatsApp.');
 }
 
 // ---------- Clientes ----------
@@ -386,7 +486,7 @@ function formCliente(c, depois) {
     $('#cOk').onclick = () => {
       const nome = $('#cNome').value.trim();
       if (!nome) { toast('Informe o nome do cliente.'); return; }
-      Object.assign(c, { nome, telefone: $('#cTel').value.trim(), endereco: $('#cEnd').value.trim(), documento: $('#cDoc').value.trim(), email: $('#cEmail').value.trim() });
+      Object.assign(c, { nome, telefone: fmtFone($('#cTel').value), endereco: $('#cEnd').value.trim(), documento: $('#cDoc').value.trim(), email: $('#cEmail').value.trim() });
       if (novo) DB.clientes.push(c);
       salvar(); fecharModal(); depois && depois(c);
     };
@@ -474,34 +574,183 @@ function reajustar() {
   });
 }
 
+// ---------- Marca: logo, Instagram e cor ----------
+const CORES = ['#1b2a41', '#222222', '#1d4ed8', '#0f766e', '#15803d', '#b42318', '#c2410c', '#6d28d9'];
+
+// Recorta as bordas vazias da logo, reduz o tamanho e descobre a cor principal dela
+function processarLogo(arquivo) {
+  return new Promise((ok, falha) => {
+    const img = new Image();
+    img.onload = () => {
+      const k1 = Math.min(1, 1200 / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * k1)), h = Math.max(1, Math.round(img.height * k1));
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(img.src);
+      const px = cx.getImageData(0, 0, w, h).data;
+      let transp = false;
+      for (let i = 3; i < px.length; i += 4) if (px[i] < 250) { transp = true; break; }
+      let x0 = w, y0 = h, x1 = -1, y1 = -1, somaLum = 0, nOpaco = 0;
+      const hist = new Map();
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4, r = px[i], g = px[i + 1], b = px[i + 2], a = px[i + 3];
+        // vazio = transparente, ou fundo branco quando a imagem não tem transparência
+        if (a < 16 || (!transp && r > 242 && g > 242 && b > 242)) continue;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (a > 200) {
+          somaLum += 0.299 * r + 0.587 * g + 0.114 * b; nOpaco++;
+          const sat = Math.max(r, g, b) - Math.min(r, g, b);
+          if (sat > 50) { const q = (r >> 4) << 8 | (g >> 4) << 4 | (b >> 4); hist.set(q, (hist.get(q) || 0) + 1); }
+        }
+      }
+      if (x1 < 0) { x0 = 0; y0 = 0; x1 = w - 1; y1 = h - 1; }
+      const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.03);
+      x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(w - 1, x1 + pad); y1 = Math.min(h - 1, y1 + pad);
+      const cw = x1 - x0 + 1, ch = y1 - y0 + 1, k2 = Math.min(1, 600 / Math.max(cw, ch));
+      const out = document.createElement('canvas'); out.width = Math.round(cw * k2); out.height = Math.round(ch * k2);
+      const ox = out.getContext('2d');
+      if (!transp) { ox.fillStyle = '#fff'; ox.fillRect(0, 0, out.width, out.height); }
+      ox.drawImage(cv, x0, y0, cw, ch, 0, 0, out.width, out.height);
+      // cor predominante (com saturação), escurecida se for clara demais para texto branco
+      // entre as cores mais usadas, prefere uma que já seja escura (boa para texto branco)
+      const lum = c => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+      const tops = [...hist.entries()].sort((a, b) => b[1] - a[1])
+        .filter(([, n], i, arr) => n > nOpaco * 0.03 && n > arr[0][1] * 0.12)
+        .map(([q]) => [q >> 8 & 15, q >> 4 & 15, q & 15].map(v => v * 16 + 8));
+      let cor = null;
+      if (tops.length) {
+        let rgb = tops.find(c => lum(c) <= 130) || tops[0];
+        while (lum(rgb) > 120) rgb = rgb.map(v => Math.round(v * 0.85));
+        cor = '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('');
+      }
+      ok({
+        logo: transp ? out.toDataURL('image/png') : out.toDataURL('image/jpeg', 0.92),
+        logoClara: transp && nOpaco > 0 && somaLum / nOpaco > 200,
+        cor
+      });
+    };
+    img.onerror = () => falha(new Error('imagem inválida'));
+    img.src = URL.createObjectURL(arquivo);
+  });
+}
+
+function previaCabecalho(c) {
+  const ig = igUsuario(c.instagram);
+  return `<div class="previa" style="background:${esc(c.cor)}">
+    ${c.logo ? `<div class="previa-logo ${c.logoClara ? 'clara' : ''}"><img src="${c.logo}" alt=""></div>` : '<div class="previa-logo vazia">SUA<br>LOGO</div>'}
+    <div class="previa-txt">
+      <b>${esc(c.empresa || 'Nome da sua empresa')}</b>
+      ${c.telefone ? `<span>WhatsApp: ${esc(c.telefone)}</span>` : ''}
+      ${ig ? `<span>${ICONE_IG} @${esc(ig)}</span>` : ''}
+      ${c.cidade ? `<span>${esc(c.cidade)}</span>` : ''}
+    </div>
+    <div class="previa-num"><small>ORÇAMENTO</small><b>Nº ${numero(c.proximoNumero)}</b></div>
+  </div>`;
+}
+const ICONE_IG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" style="vertical-align:-2px"><rect x="2.5" y="2.5" width="19" height="19" rx="5.5"/><circle cx="12" cy="12" r="4.4"/><circle cx="17.6" cy="6.4" r="1" fill="currentColor"/></svg>';
+
+// Bloco reaproveitado na tela de boas-vindas e na tela da empresa
+function blocoMarca(c, aoMudar) {
+  return {
+    html: `
+      <div class="logo-zona" id="logoZona" role="button" tabindex="0">
+        ${c.logo ? `<img src="${c.logo}" alt="Logo" class="${c.logoClara ? 'clara' : ''}">` : '<span class="logo-mais">＋</span><b>Toque para colocar sua logo</b><small>Foto ou imagem da galeria (PNG, JPG)</small>'}
+      </div>
+      <input type="file" accept="image/*" id="logoArq" hidden>
+      ${c.logo ? '<div class="botoes" style="margin-top:8px"><button class="btn sec peq" id="logoTroca">Trocar logo</button><button class="btn perigo peq" id="logoRm">Remover</button></div>' : ''}
+      <label>Nome da empresa ou seu nome *</label><input data-c="empresa" value="${esc(c.empresa === CONFIG_PADRAO.empresa ? '' : c.empresa)}" placeholder="Ex.: HSS Instalações Elétricas">
+      <label>WhatsApp</label><input data-c="telefone" type="tel" value="${esc(c.telefone)}" placeholder="(12) 99999-9999">
+      <label>Instagram</label>
+      <div class="campo-ig"><span>@</span><input data-c="instagram" value="${esc(igUsuario(c.instagram))}" placeholder="seuperfil" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <label>Cidade / UF</label><input data-c="cidade" value="${esc(c.cidade)}" placeholder="Ex.: Taubaté/SP">
+      <label>Cor do PDF</label>
+      <div class="cores">${CORES.map(k => `<button class="cor ${k === c.cor ? 'ativa' : ''}" data-cor="${k}" style="background:${k}" aria-label="Cor ${k}"></button>`).join('')}
+        <label class="cor outra" title="Outra cor"><input type="color" id="corLivre" value="${c.cor}">🎨</label></div>
+      <p class="ajuda" id="dicaCor"></p>
+      <label>Prévia do topo do PDF</label>
+      <div id="previa">${previaCabecalho(c)}</div>`,
+    ligar(raiz, redesenhar) {
+      const atualizarPrevia = () => { raiz.querySelector('#previa').innerHTML = previaCabecalho(c); };
+      raiz.querySelectorAll('[data-c]').forEach(el => el.addEventListener('input', () => {
+        const f = el.dataset.c;
+        c[f] = f === 'instagram' ? igUsuario(el.value) : el.value;
+        salvar(); atualizarPrevia(); aoMudar && aoMudar();
+      }));
+      const tel = raiz.querySelector('[data-c="telefone"]');
+      tel.addEventListener('change', () => { tel.value = c.telefone = fmtFone(tel.value); salvar(); atualizarPrevia(); });
+      const ig = raiz.querySelector('[data-c="instagram"]');
+      ig.addEventListener('change', () => { ig.value = igUsuario(ig.value); });
+      const escolher = () => raiz.querySelector('#logoArq').click();
+      raiz.querySelector('#logoZona').onclick = escolher;
+      const tr = raiz.querySelector('#logoTroca'); if (tr) tr.onclick = escolher;
+      const rm = raiz.querySelector('#logoRm'); if (rm) rm.onclick = () => { c.logo = ''; c.logoClara = false; salvar(); redesenhar(); };
+      raiz.querySelector('#logoArq').onchange = async e => {
+        const arq = e.target.files[0]; if (!arq) return;
+        try {
+          const r = await processarLogo(arq);
+          c.logo = r.logo; c.logoClara = r.logoClara;
+          if (r.cor && (c.cor === CONFIG_PADRAO.cor || !c.corEscolhida)) c.cor = r.cor;
+          salvar(); redesenhar();
+          toast(r.cor ? 'Logo salva! Usei a cor da sua logo no PDF.' : 'Logo salva!');
+        } catch (er) { toast('Não consegui abrir essa imagem. Tente outra.'); }
+      };
+      const marcarCor = k => {
+        c.cor = k; c.corEscolhida = true; salvar(); atualizarPrevia();
+        raiz.querySelectorAll('.cor[data-cor]').forEach(b => b.classList.toggle('ativa', b.dataset.cor === k));
+      };
+      raiz.querySelectorAll('.cor[data-cor]').forEach(b => b.onclick = () => marcarCor(b.dataset.cor));
+      raiz.querySelector('#corLivre').oninput = e => marcarCor(e.target.value);
+    }
+  };
+}
+
+function telaBoasVindas() {
+  topo('Bem-vindo');
+  const c = DB.config;
+  const bloco = blocoMarca(c);
+  view.innerHTML = `
+    <div class="boas-vindas">
+      <div class="bv-icone">⚡</div>
+      <h2>Vamos deixar seus orçamentos com a sua marca</h2>
+      <p>Preencha uma vez só. Sua logo, WhatsApp e Instagram vão aparecer em todo orçamento, proposta e recibo que você mandar.</p>
+    </div>
+    <div class="card">${bloco.html}</div>
+    <div class="botoes"><button class="btn amarelo bloco" id="bvOk">Começar a fazer orçamentos →</button></div>
+    <p class="ajuda" style="text-align:center"><a href="#" id="bvPular">Pular por enquanto</a> · dá para mudar tudo depois na aba Empresa</p>`;
+  bloco.ligar(view, telaBoasVindas);
+  const concluir = () => { c.configurado = true; salvar(); location.hash = '#/orcamentos'; rota(); };
+  $('#bvOk').onclick = () => {
+    if (!c.empresa || c.empresa === CONFIG_PADRAO.empresa) { toast('Coloque o nome da empresa ou o seu nome.'); view.querySelector('[data-c="empresa"]').focus(); return; }
+    concluir();
+  };
+  $('#bvPular').onclick = e => { e.preventDefault(); concluir(); };
+}
+
 // ---------- Configurações da empresa ----------
 function telaConfig() {
   topo('Minha empresa');
   const c = DB.config;
-  const campo = (f, rot, extra = '') => `<label>${rot}</label><input data-c="${f}" value="${esc(c[f])}" ${extra}>`;
+  const bloco = blocoMarca(c, () => { $('#logoTopo').hidden = !c.logo; });
+  const campo = (f, rot, extra = '') => `<label>${rot}</label><input data-c2="${f}" value="${esc(c[f])}" ${extra}>`;
   view.innerHTML = `
     <div class="card">
-      <h3>Dados que aparecem no PDF</h3>
-      ${campo('empresa', 'Nome / empresa *')}
+      <h3>Sua marca</h3>
+      ${bloco.html}
+    </div>
+    <div class="card">
+      <h3>Outros dados do PDF</h3>
       ${campo('documento', 'CPF ou CNPJ', 'inputmode="numeric"')}
-      ${campo('telefone', 'Telefone / WhatsApp', 'type="tel"')}
       ${campo('email', 'E-mail', 'type="email"')}
+      ${campo('site', 'Site', 'placeholder="www.seusite.com.br" autocapitalize="off"')}
       ${campo('endereco', 'Endereço')}
-      ${campo('cidade', 'Cidade / UF')}
       ${campo('pix', 'Chave Pix (aparece no PDF e na mensagem)')}
-      <label>Logo</label>
-      <div class="logo-prev">${c.logo ? `<img src="${c.logo}" alt="Logo">` : ''}
-        <input type="file" accept="image/*" id="logoArq" style="flex:1">
-      </div>
-      ${c.logo ? '<div class="botoes"><button class="btn perigo peq" id="logoRm">Remover logo</button></div>' : ''}
-      <label>Cor do PDF</label><input type="color" data-c="cor" value="${c.cor}" style="height:48px;padding:4px">
     </div>
     <div class="card">
       <h3>Padrões para novos orçamentos</h3>
       ${campo('validadeDias', 'Validade (dias)', 'inputmode="numeric"')}
-      <label>Forma de pagamento</label><textarea data-c="pagamento">${esc(c.pagamento)}</textarea>
-      <label>Garantia</label><textarea data-c="garantia">${esc(c.garantia)}</textarea>
-      <label>Observações</label><textarea data-c="observacoes">${esc(c.observacoes)}</textarea>
+      <label>Forma de pagamento</label><textarea data-c2="pagamento">${esc(c.pagamento)}</textarea>
+      <label>Garantia</label><textarea data-c2="garantia">${esc(c.garantia)}</textarea>
+      <label>Observações</label><textarea data-c2="observacoes">${esc(c.observacoes)}</textarea>
       ${campo('proximoNumero', 'Próximo número de orçamento', 'inputmode="numeric"')}
     </div>
     <div class="card">
@@ -512,24 +761,12 @@ function telaConfig() {
         <label class="btn sec" style="margin:0;color:var(--azul)">⬆️ Importar<input type="file" accept=".json,application/json" id="bkImp" hidden></label>
       </div>
     </div>`;
-  view.querySelectorAll('[data-c]').forEach(el => el.addEventListener('input', () => {
-    const f = el.dataset.c;
+  bloco.ligar(view, telaConfig);
+  view.querySelectorAll('[data-c2]').forEach(el => el.addEventListener('input', () => {
+    const f = el.dataset.c2;
     c[f] = (f === 'validadeDias' || f === 'proximoNumero') ? Math.max(f === 'proximoNumero' ? 1 : 0, parseInt(el.value) || 0) : el.value;
     salvar();
   }));
-  $('#logoArq').onchange = e => {
-    const arq = e.target.files[0]; if (!arq) return;
-    const img = new Image();
-    img.onload = () => {
-      const max = 400, k = Math.min(1, max / Math.max(img.width, img.height));
-      const cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
-      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-      c.logo = cv.toDataURL('image/png'); salvar(); telaConfig(); toast('Logo salva');
-      URL.revokeObjectURL(img.src);
-    };
-    img.src = URL.createObjectURL(arq);
-  };
-  const rm = $('#logoRm'); if (rm) rm.onclick = () => { c.logo = ''; salvar(); telaConfig(); };
   $('#bkExp').onclick = () => {
     const blob = new Blob([JSON.stringify(DB, null, 1)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `backup-orcamentos-${hoje()}.json`; a.click();
